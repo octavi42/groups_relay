@@ -1,0 +1,17 @@
+# Relay Configuration
+relay_url = "wss://groups.yourdomain.com"
+local_addr = "127.0.0.1:8080"
+db_path = "/app/data"
+
+# Connection limits
+max_limit = 500
+max_subscriptions = 20
+
+# Relay Information (NIP-11)
+[info]
+name = "My NIP-29 Groups Relay"
+description = "Decentralized group chat relay powered by Nostr"
+contact = "admin@yourdomain.com"
+supported_nips = [1, 9, 11, 29, 40, 42, 70]
+software = "https://github.com/verse-pbc/groups_relay"
+version = "1.0.0"
