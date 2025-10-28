@@ -310,6 +310,10 @@ pub struct Invite {
     pub roles: HashSet<GroupRole>,
     pub reusable: bool,
     pub redeemed_by: Option<(PublicKey, Timestamp)>,
+    /// Expiration timestamp for preauth codes (None = no expiration)
+    pub expires_at: Option<Timestamp>,
+    /// Whether this is a preauth code (vs regular invite code)
+    pub is_preauth: bool,
 }
 
 impl Invite {
@@ -319,11 +323,38 @@ impl Invite {
             roles,
             reusable: false,
             redeemed_by: None,
+            expires_at: None,
+            is_preauth: false,
+        }
+    }
+
+    pub fn new_preauth(
+        event_id: EventId,
+        roles: HashSet<GroupRole>,
+        expires_at: Option<Timestamp>,
+    ) -> Self {
+        Self {
+            event_id,
+            roles,
+            reusable: false, // Preauth codes are single-use by default
+            redeemed_by: None,
+            expires_at,
+            is_preauth: true,
         }
     }
 
     pub fn can_use(&self) -> bool {
-        self.reusable || self.redeemed_by.is_none()
+        // Check if already used (for non-reusable invites)
+        let not_used = self.reusable || self.redeemed_by.is_none();
+
+        // Check if expired
+        let not_expired = self.expires_at.map_or(true, |exp| Timestamp::now() < exp);
+
+        not_used && not_expired
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.expires_at.map_or(false, |exp| Timestamp::now() >= exp)
     }
 
     pub fn mark_used(&mut self, pubkey: PublicKey, timestamp: Timestamp) {
@@ -492,6 +523,31 @@ impl Group {
             self.members.len()
         );
         // println!("[update_state] Updated timestamp to {}", self.updated_at.as_u64());
+
+        // Clean up expired preauth codes
+        self.cleanup_expired_preauth_codes();
+    }
+
+    /// Removes expired preauth codes from the invites map
+    fn cleanup_expired_preauth_codes(&mut self) {
+        let mut expired_codes = Vec::new();
+
+        // Find all expired preauth codes
+        for (code, invite) in &self.invites {
+            if invite.is_preauth && invite.is_expired() {
+                expired_codes.push(code.clone());
+            }
+        }
+
+        // Remove expired codes
+        for code in expired_codes {
+            if let Some(removed_invite) = self.invites.remove(&code) {
+                info!(
+                    "Removed expired preauth code '{}' from group {} (expired at: {:?})",
+                    code, self.id, removed_invite.expires_at
+                );
+            }
+        }
     }
 
     /// Checks if an event kind is a group management kind that requires a managed group to exist
@@ -947,9 +1003,10 @@ impl Group {
                     let can_use = invite.can_use();
                     let reusable = invite.reusable;
                     let roles = invite.roles.clone();
+                    let is_preauth = invite.is_preauth;
 
                     // Return the data we need
-                    Some((code, can_use, reusable, roles))
+                    Some((code, can_use, reusable, roles, is_preauth))
                 } else {
                     // println!("[join_request] Invite not found");
                     None
@@ -963,37 +1020,51 @@ impl Group {
 
         match invite_data {
             // Valid invite that can be used
-            Some((invite_code, true, reusable, roles)) => {
-                // println!(
-                //     "[join_request] Invite code matched, adding member {}",
-                //     event.pubkey
-                // );
-                info!("Invite code matched, adding member {}", event.pubkey);
+            Some((invite_code, true, reusable, roles, is_preauth)) => {
+                if is_preauth {
+                    info!(
+                        "Preauth code matched, auto-approving join for {}",
+                        event.pubkey
+                    );
 
-                // Now modify the invite if needed (for single-use invites)
-                if !reusable {
-                    // For single-use invites, mark it as used
-                    // println!("[join_request] Single-use invite, marking as used");
+                    // Mark the preauth code as used (they are single-use by default)
                     if let Some(invite) = self.invites.get_mut(invite_code) {
                         invite.mark_used(event.pubkey, event.created_at);
-                        // Let the RefMut be dropped automatically at the end of this scope
                     }
+
+                    // Add the member with the roles we collected earlier
+                    self.members
+                        .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
+                    self.join_requests.remove(&event.pubkey);
+                    self.update_state();
+
+                    // For preauth codes, generate relay-signed Kind 9000 add-user event
+                    self.create_preauth_approval_commands(event, relay_pubkey)
                 } else {
-                    // println!("[join_request] Reusable invite, no need to mark as used");
+                    info!(
+                        "Regular invite code matched, adding member {}",
+                        event.pubkey
+                    );
+
+                    // Now modify the invite if needed (for single-use invites)
+                    if !reusable {
+                        // For single-use invites, mark it as used
+                        if let Some(invite) = self.invites.get_mut(invite_code) {
+                            invite.mark_used(event.pubkey, event.created_at);
+                        }
+                    }
+
+                    // Add the member with the roles we collected earlier
+                    self.members
+                        .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
+                    self.join_requests.remove(&event.pubkey);
+                    self.update_state();
+
+                    self.create_join_request_commands(true, event, relay_pubkey)
                 }
-
-                // Add the member with the roles we collected earlier
-                self.members
-                    .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
-                self.join_requests.remove(&event.pubkey);
-
-                // println!("[join_request] Updating state...");
-                self.update_state();
-                // println!("[join_request] Creating commands for join with invite");
-                self.create_join_request_commands(true, event, relay_pubkey)
             }
             // Invite exists but cannot be used (already used and not reusable)
-            Some((_, false, _, _)) => {
+            Some((_, false, _, _, _)) => {
                 // println!(
                 //     "[join_request] Invite already used, adding join request for {}",
                 //     event.pubkey
@@ -1137,6 +1208,57 @@ impl Group {
         Ok(commands)
     }
 
+    /// Creates commands for preauth auto-approval, including relay-signed Kind 9000 add-user event
+    fn create_preauth_approval_commands(
+        &self,
+        join_event: Box<Event>,
+        relay_pubkey: &PublicKey,
+    ) -> Result<Vec<StoreCommand>, Error> {
+        if join_event.kind != KIND_GROUP_USER_JOIN_REQUEST_9021 {
+            return Err(Error::notice(format!(
+                "Invalid event kind for preauth approval {}",
+                join_event.kind
+            )));
+        }
+
+        let mut commands = vec![
+            // Save the original join request
+            StoreCommand::SaveSignedEvent(join_event.clone(), self.scope.clone(), None),
+        ];
+
+        // Generate relay-signed Kind 9000 add-user event for auto-approval
+        let add_user_tags = vec![
+            Tag::custom(TagKind::h(), vec![self.id.clone()]),
+            Tag::public_key(join_event.pubkey),
+        ];
+
+        let add_user_event = EventBuilder::new(KIND_GROUP_ADD_USER_9000, "")
+            .tags(add_user_tags)
+            .build_with_ctx(&std::time::Instant::now(), *relay_pubkey);
+
+        commands.push(StoreCommand::SaveUnsignedEvent(
+            add_user_event,
+            self.scope.clone(),
+            None,
+        ));
+
+        // Generate updated membership events
+        let membership_events = self.generate_membership_events(relay_pubkey)?;
+        commands.extend(
+            membership_events
+                .into_iter()
+                .map(|e| StoreCommand::SaveUnsignedEvent(e, self.scope.clone(), None)),
+        );
+
+        info!(
+            "Generated preauth approval with {} commands for user {}",
+            commands.len(),
+            join_event.pubkey
+        );
+
+        Ok(commands)
+    }
+
     pub fn create_invite(
         &mut self,
         invite_event: &Event,
@@ -1168,14 +1290,42 @@ impl Group {
             ));
         }
 
+        // Check if this is a preauth code by looking for 'preauth' tag
+        let is_preauth = invite_event
+            .tags
+            .iter()
+            .any(|t| t.kind() == TagKind::custom("preauth"));
+
         // Check if the invite is reusable
         let is_reusable = invite_event
             .tags
             .iter()
             .any(|t| t.kind() == TagKind::custom("reusable"));
 
-        let mut invite = Invite::new(invite_event.id, HashSet::from([GroupRole::Member]));
-        invite.reusable = is_reusable;
+        // Parse expiration timestamp if present
+        let expires_at = invite_event
+            .tags
+            .find(TagKind::custom("expires"))
+            .and_then(|t| t.content())
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Timestamp::from);
+
+        let invite = if is_preauth {
+            info!(
+                "Creating preauth invite with code: {}, expires_at: {:?}",
+                invite_code, expires_at
+            );
+            Invite::new_preauth(
+                invite_event.id,
+                HashSet::from([GroupRole::Member]),
+                expires_at,
+            )
+        } else {
+            let mut invite = Invite::new(invite_event.id, HashSet::from([GroupRole::Member]));
+            invite.reusable = is_reusable;
+            invite.expires_at = expires_at;
+            invite
+        };
 
         self.invites.insert(invite_code.to_string(), invite);
         self.update_state();

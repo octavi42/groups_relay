@@ -22,7 +22,10 @@ pub mod test_utils;
 
 // Re-export commonly used items
 pub use app_state::HttpServerState;
-pub use groups::{Group, Groups, KIND_GROUP_USER_JOIN_REQUEST_9021};
+pub use groups::{
+    Group, Groups, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007, KIND_GROUP_CREATE_INVITE_9009,
+    KIND_GROUP_USER_JOIN_REQUEST_9021,
+};
 pub use relay_builder::Error;
 pub use relay_builder::RelayDatabase;
 pub use relay_builder::StoreCommand;
