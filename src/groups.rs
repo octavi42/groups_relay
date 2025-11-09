@@ -235,6 +235,41 @@ impl Groups {
             );
         }
 
+        // Step 3: Filter out deleted groups
+        info!("Checking for deleted groups in scope {:?}", scope);
+        let mut groups_to_remove = Vec::new();
+
+        for group_id in groups.keys() {
+            let deletion_filter = vec![Filter::new()
+                .kinds(vec![KIND_GROUP_DELETE_9008])
+                .custom_tag(
+                    SingleLetterTag::lowercase(Alphabet::H),
+                    group_id.to_string(),
+                )
+                .since(Timestamp::from(0))];
+
+            match database.query(deletion_filter, scope).await {
+                Ok(deletion_events) => {
+                    if !deletion_events.is_empty() {
+                        info!("[{}] Group was deleted, removing from scope {:?}", group_id, scope);
+                        groups_to_remove.push(group_id.clone());
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Error checking deletion status for group {} in scope {:?}: {}",
+                        group_id, scope, e
+                    );
+                }
+            }
+        }
+
+        // Remove deleted groups
+        for group_id in groups_to_remove {
+            groups.remove(&group_id);
+        }
+
+        info!("Final group count after deletion filtering in scope {:?}: {}", scope, groups.len());
         Ok(groups)
     }
 
