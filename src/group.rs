@@ -433,8 +433,39 @@ impl From<&Event> for Group {
         // Apply tags to metadata to handle public/private, open/closed, etc.
         group.metadata.apply_tags(event);
 
-        // Only set created_at for group creation events
-        if event.kind == KIND_GROUP_CREATE_9007 {
+        // For group creation events, also parse JSON content if present
+        if event.kind == KIND_GROUP_CREATE_9007 && !event.content.is_empty() {
+            if let Ok(content_json) = serde_json::from_str::<serde_json::Value>(&event.content) {
+                // Extract name from JSON content if present
+                if let Some(name) = content_json.get("name").and_then(|v| v.as_str()) {
+                    if !name.is_empty() {
+                        group.metadata.name = name.to_string();
+                    }
+                }
+
+                // Extract about from JSON content if present
+                if let Some(about) = content_json.get("about").and_then(|v| v.as_str()) {
+                    if !about.is_empty() {
+                        group.metadata.about = Some(about.to_string());
+                    }
+                }
+
+                // Extract picture from JSON content if present
+                if let Some(picture) = content_json.get("picture").and_then(|v| v.as_str()) {
+                    if !picture.is_empty() {
+                        group.metadata.picture = Some(picture.to_string());
+                    }
+                }
+
+                // Extract public/private from JSON content
+                if let Some(is_public) = content_json.get("public").and_then(|v| v.as_bool()) {
+                    group.metadata.private = !is_public;
+                }
+            }
+
+            group.created_at = event.created_at;
+        } else if event.kind == KIND_GROUP_CREATE_9007 {
+            // Only set created_at for group creation events
             group.created_at = event.created_at;
         }
 
