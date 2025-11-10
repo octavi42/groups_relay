@@ -1742,49 +1742,41 @@ impl Group {
         debug!("[{}] Loading invite state from {} events", self.id, events.len());
 
         for event in events {
-            // Only process invite state events
-            match event.kind {
-                KIND_GROUP_INVITE_DECLINE_9023 | KIND_GROUP_INVITE_SEEN_9024 | KIND_GROUP_INVITE_DELETE_9025 => {
-                    // Get invite code from tags
-                    if let Some(invite_code) = event
-                        .tags
-                        .find(TagKind::custom("code"))
-                        .and_then(|t| t.content())
-                    {
-                        // Find the corresponding invite
-                        if let Some(invite) = self.invites.get_mut(invite_code) {
-                            match event.kind {
-                                KIND_GROUP_INVITE_DECLINE_9023 => {
-                                    invite.mark_declined(event.pubkey, event.created_at);
-                                    debug!("[{}] Restored decline state for invite {} by user {}",
-                                           self.id, invite_code, event.pubkey);
-                                }
-                                KIND_GROUP_INVITE_SEEN_9024 => {
-                                    invite.mark_seen(event.pubkey, event.created_at);
-                                    debug!("[{}] Restored seen state for invite {} by user {}",
-                                           self.id, invite_code, event.pubkey);
-                                }
-                                KIND_GROUP_INVITE_DELETE_9025 => {
-                                    invite.mark_deleted(event.pubkey, event.created_at);
-                                    debug!("[{}] Restored deleted state for invite {} by user {}",
-                                           self.id, invite_code, event.pubkey);
-                                }
-                                _ => {}
-                            }
-                        } else {
-                            // Invite not found - this could happen if the invite was deleted
-                            // or if state events exist for invites that were never loaded
-                            debug!("[{}] Invite state event for unknown invite code: {} (event kind: {})",
-                                   self.id, invite_code, event.kind);
+            // Only process invite state events (9023, 9024, 9025)
+            if event.kind == Kind::Custom(9023) || event.kind == Kind::Custom(9024) || event.kind == Kind::Custom(9025) {
+                // Get invite code from tags
+                if let Some(invite_code) = event
+                    .tags
+                    .find(TagKind::custom("code"))
+                    .and_then(|t| t.content())
+                {
+                    // Find the corresponding invite
+                    if let Some(invite) = self.invites.get_mut(invite_code) {
+                        if event.kind == Kind::Custom(9023) {
+                            // DECLINE
+                            invite.mark_declined(event.pubkey, event.created_at);
+                            debug!("[{}] Restored decline state for invite {} by user {}",
+                                   self.id, invite_code, event.pubkey);
+                        } else if event.kind == Kind::Custom(9024) {
+                            // SEEN
+                            invite.mark_seen(event.pubkey, event.created_at);
+                            debug!("[{}] Restored seen state for invite {} by user {}",
+                                   self.id, invite_code, event.pubkey);
+                        } else if event.kind == Kind::Custom(9025) {
+                            // DELETE
+                            invite.mark_deleted(event.pubkey, event.created_at);
+                            debug!("[{}] Restored deleted state for invite {} by user {}",
+                                   self.id, invite_code, event.pubkey);
                         }
                     } else {
-                        warn!("[{}] Invite state event missing code tag: {} (event kind: {})",
-                              self.id, event.id, event.kind);
+                        // Invite not found - this could happen if the invite was deleted
+                        // or if state events exist for invites that were never loaded
+                        debug!("[{}] Invite state event for unknown invite code: {} (event kind: {})",
+                               self.id, invite_code, event.kind);
                     }
-                }
-                _ => {
-                    // Not an invite state event, skip
-                    continue;
+                } else {
+                    warn!("[{}] Invite state event missing code tag: {} (event kind: {})",
+                          self.id, event.id, event.kind);
                 }
             }
         }

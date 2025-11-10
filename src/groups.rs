@@ -194,7 +194,7 @@ impl Groups {
                     // 1. First pass: Load invites and other primary data
                     // 2. Second pass: Restore invite state tracking
 
-                    for event in &historical_events {
+                    for event in historical_events.iter() {
                         if event.kind == KIND_GROUP_CREATE_9007 {
                             debug!("[{}] Found creation event in scope {:?}", group_id, scope);
                             group.created_at = event.created_at;
@@ -216,7 +216,7 @@ impl Groups {
                     }
 
                     // Second pass: Restore invite state tracking from state events
-                    if let Err(e) = group.load_invite_state_from_events(&historical_events) {
+                    if let Err(e) = group.load_invite_state_from_events(&historical_events.iter().cloned().collect::<Vec<_>>()) {
                         warn!(
                             "Error loading invite state for group {} in scope {:?}: {}",
                             group_id, scope, e
