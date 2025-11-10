@@ -3,6 +3,7 @@ use crate::groups::{
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
+    KIND_GROUP_INVITE_DECLINE_9023, KIND_GROUP_INVITE_SEEN_9024, KIND_GROUP_INVITE_DELETE_9025,
 };
 use crate::Groups;
 use nostr_sdk::prelude::*;
@@ -249,6 +250,24 @@ impl EventProcessor for GroupsRelayProcessor {
                 debug!(target: "groups_relay_logic", "Processing group create invite event: id={}", event.id);
                 self.groups
                     .handle_create_invite(Box::new(event), &subdomain)?
+            }
+
+            k if k == KIND_GROUP_INVITE_DECLINE_9023 => {
+                debug!(target: "groups_relay_logic", "Processing invite decline event: id={}", event.id);
+                self.groups
+                    .handle_invite_decline(Box::new(event), &subdomain)?
+            }
+
+            k if k == KIND_GROUP_INVITE_SEEN_9024 => {
+                debug!(target: "groups_relay_logic", "Processing invite seen event: id={}", event.id);
+                self.groups
+                    .handle_invite_seen(Box::new(event), &subdomain)?
+            }
+
+            k if k == KIND_GROUP_INVITE_DELETE_9025 => {
+                debug!(target: "groups_relay_logic", "Processing invite delete event: id={}", event.id);
+                self.groups
+                    .handle_invite_delete(Box::new(event), &subdomain)?
             }
 
             k if !NON_GROUP_ALLOWED_KINDS.contains(&k)

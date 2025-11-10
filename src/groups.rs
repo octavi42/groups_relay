@@ -4,7 +4,8 @@ pub use crate::group::{
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_MEMBERS_39002, KIND_GROUP_METADATA_39000,
     KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006, KIND_GROUP_USER_JOIN_REQUEST_9021,
-    KIND_GROUP_USER_LEAVE_REQUEST_9022, KIND_SIMPLE_LIST_10009, NON_GROUP_ALLOWED_KINDS,
+    KIND_GROUP_USER_LEAVE_REQUEST_9022, KIND_GROUP_INVITE_DECLINE_9023, KIND_GROUP_INVITE_SEEN_9024,
+    KIND_GROUP_INVITE_DELETE_9025, KIND_SIMPLE_LIST_10009, NON_GROUP_ALLOWED_KINDS,
 };
 use crate::metrics;
 use crate::StoreCommand;
@@ -944,6 +945,54 @@ impl Groups {
     }
 
     // Nothing - removing backward compatibility method
+
+    pub fn handle_invite_decline(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
+        let result = {
+            let mut group = self
+                .find_group_from_event_mut(&event, scope)?
+                .ok_or_else(|| Error::event_error("[InviteDecline] Group not found", event_id))?;
+
+            group.handle_invite_decline(event, &self.relay_pubkey)
+        };
+        result
+    }
+
+    pub fn handle_invite_seen(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
+        let result = {
+            let mut group = self
+                .find_group_from_event_mut(&event, scope)?
+                .ok_or_else(|| Error::event_error("[InviteSeen] Group not found", event_id))?;
+
+            group.handle_invite_seen(event, &self.relay_pubkey)
+        };
+        result
+    }
+
+    pub fn handle_invite_delete(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
+        let result = {
+            let mut group = self
+                .find_group_from_event_mut(&event, scope)?
+                .ok_or_else(|| Error::event_error("[InviteDelete] Group not found", event_id))?;
+
+            group.handle_invite_delete(event, &self.relay_pubkey)
+        };
+        result
+    }
 }
 
 impl Deref for Groups {

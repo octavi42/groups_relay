@@ -8,6 +8,7 @@ use crate::groups::{
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022,
+    KIND_GROUP_INVITE_DECLINE_9023, KIND_GROUP_INVITE_SEEN_9024, KIND_GROUP_INVITE_DELETE_9025,
 };
 
 #[derive(Debug, Clone)]
@@ -73,6 +74,9 @@ impl ValidationMiddleware {
                             || *k == KIND_GROUP_CREATE_INVITE_9009
                             || *k == KIND_GROUP_USER_JOIN_REQUEST_9021
                             || *k == KIND_GROUP_USER_LEAVE_REQUEST_9022
+                            || *k == KIND_GROUP_INVITE_DECLINE_9023
+                            || *k == KIND_GROUP_INVITE_SEEN_9024
+                            || *k == KIND_GROUP_INVITE_DELETE_9025
                             || ADDRESSABLE_EVENT_KINDS.contains(k)
                     )
             })

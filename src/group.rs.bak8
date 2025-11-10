@@ -32,7 +32,6 @@ impl From<GroupError> for Error {
             GroupError::Internal(err) => Error::notice(err.to_string()),
         }
     }
-
 }
 
 // NIP-60 Cashu Wallet kinds
@@ -116,21 +115,17 @@ pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 13] = [
     KIND_GROUP_CREATE_INVITE_9009,
     KIND_GROUP_USER_JOIN_REQUEST_9021,
     KIND_GROUP_USER_LEAVE_REQUEST_9022,
+
+// NEW: Invite state tracking events
+pub const KIND_GROUP_INVITE_DECLINE_9023: Kind = Kind::Custom(9023); // User -> Relay: Decline an invite
+pub const KIND_GROUP_INVITE_SEEN_9024: Kind = Kind::Custom(9024);    // User -> Relay: Mark invite as seen
+pub const KIND_GROUP_INVITE_DELETE_9025: Kind = Kind::Custom(9025);  // User -> Relay: Delete invite notification
     KIND_GROUP_INVITE_DECLINE_9023,
     KIND_GROUP_INVITE_SEEN_9024,
     KIND_GROUP_INVITE_DELETE_9025,
+
     KIND_CLAIM_28934,
 ];
-
-/// Status of an invite for a specific user
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum InviteStatus {
-    Pending,  // Not acted upon
-    Seen,     // Viewed but no action taken
-    Accepted, // User joined using this invite
-    Declined, // User declined the invite
-    Deleted,  // User deleted the notification
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupMetadata {
@@ -159,7 +154,6 @@ impl GroupMetadata {
             unknown_tags: Vec::new(),
         }
     }
-
 
     /// Apply event tags to update metadata fields.
     pub fn apply_tags(&mut self, event: &Event) {
@@ -227,7 +221,6 @@ impl GroupMetadata {
             .retain(|tag| !found_tags.contains_key(&tag.kind()));
         self.unknown_tags.extend(found_tags.into_values());
     }
-
 }
 
 #[derive(Display, Debug, Clone, Serialize, Deserialize, EnumIter, PartialEq, Eq, Hash)]
@@ -245,7 +238,6 @@ impl GroupRole {
             GroupRole::Custom(name) => (name, "Custom role"),
         }
     }
-
 }
 
 impl FromStr for GroupRole {
@@ -264,9 +256,7 @@ impl FromStr for GroupRole {
             custom => Ok(GroupRole::Custom(custom.to_string())),
         }
     }
-
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupMember {
@@ -279,11 +269,9 @@ impl GroupMember {
         Self { pubkey, roles }
     }
 
-
     pub fn is(&self, role: GroupRole) -> bool {
         self.roles.contains(&role)
     }
-
 
     pub fn new_admin(pubkey: PublicKey) -> Self {
         Self {
@@ -292,14 +280,12 @@ impl GroupMember {
         }
     }
 
-
     pub fn new_member(pubkey: PublicKey) -> Self {
         Self {
             pubkey,
             roles: HashSet::from([GroupRole::Member]),
         }
     }
-
 }
 
 impl TryFrom<&Tag> for GroupMember {
@@ -331,9 +317,7 @@ impl TryFrom<&Tag> for GroupMember {
                 .collect::<Result<_, _>>()?,
         })
     }
-
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invite {
@@ -369,7 +353,6 @@ impl Invite {
         }
     }
 
-
     pub fn new_preauth(
         event_id: EventId,
         roles: HashSet<GroupRole>,
@@ -382,14 +365,8 @@ impl Invite {
             redeemed_by: None,
             expires_at,
             is_preauth: true,
-
-            // Initialize state tracking sets
-            declined_by: HashSet::new(),
-            seen_by: HashSet::new(),
-            deleted_by: HashSet::new(),
         }
     }
-
 
     pub fn can_use(&self) -> bool {
         // Check if already used (for non-reusable invites)
@@ -401,11 +378,9 @@ impl Invite {
         not_used && not_expired
     }
 
-
     pub fn is_expired(&self) -> bool {
         self.expires_at.map_or(false, |exp| Timestamp::now() >= exp)
     }
-
 
     pub fn mark_used(&mut self, pubkey: PublicKey, timestamp: Timestamp) {
         // println!("[mark_used] Marking invite as used, reusable={}", self.reusable);
@@ -418,22 +393,6 @@ impl Invite {
           // println!("[mark_used] After marking: reusable={}, redeemed_by={:?}",
           //          self.reusable, self.redeemed_by.as_ref().map(|(pk, _)| pk.to_string()));
     }
-
-    /// Mark invite as declined by a user
-    pub fn mark_declined(&mut self, pubkey: PublicKey, timestamp: Timestamp) {
-        self.declined_by.insert((pubkey, timestamp));
-    }
-
-    /// Mark invite as seen by a user
-    pub fn mark_seen(&mut self, pubkey: PublicKey, timestamp: Timestamp) {
-        self.seen_by.insert((pubkey, timestamp));
-    }
-
-    /// Mark invite as deleted by a user
-    pub fn mark_deleted(&mut self, pubkey: PublicKey, timestamp: Timestamp) {
-        self.deleted_by.insert((pubkey, timestamp));
-    }
-
 }
 
 fn default_scope() -> Scope {
@@ -460,15 +419,6 @@ pub struct Group {
     pub updated_at: Timestamp,
     #[serde(skip, default = "default_scope")]
     pub scope: Scope,
-    // Invite state tracking fields
-    #[serde(skip_serializing_if = "HashSet::is_empty", default)]
-    pub declined_by: HashSet<(PublicKey, Timestamp)>,
-    #[serde(skip_serializing_if = "HashSet::is_empty", default)]
-    pub seen_by: HashSet<(PublicKey, Timestamp)>,
-    #[serde(skip_serializing_if = "HashSet::is_empty", default)]
-    pub deleted_by: HashSet<(PublicKey, Timestamp)>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub redeemed_by: Option<(PublicKey, Timestamp)>,
 }
 
 impl Default for Group {
@@ -483,13 +433,8 @@ impl Default for Group {
             created_at: Timestamp::now(),
             updated_at: Timestamp::now(),
             scope: Scope::Default,
-            declined_by: HashSet::new(),
-            seen_by: HashSet::new(),
-            deleted_by: HashSet::new(),
-            redeemed_by: None,
         }
     }
-
 }
 
 impl From<&Event> for Group {
@@ -551,7 +496,6 @@ impl From<&Event> for Group {
 
         group
     }
-
 }
 
 impl std::fmt::Debug for Group {
@@ -622,7 +566,6 @@ impl std::fmt::Debug for Group {
         writeln!(f, "  updated_at: {}", self.updated_at.as_u64())?;
         write!(f, "}}")
     }
-
 }
 
 impl Group {
@@ -640,7 +583,6 @@ impl Group {
         // Clean up expired preauth codes
         self.cleanup_expired_preauth_codes();
     }
-
 
     /// Removes expired preauth codes from the invites map
     fn cleanup_expired_preauth_codes(&mut self) {
@@ -664,13 +606,11 @@ impl Group {
         }
     }
 
-
     /// Checks if an event kind is a group management kind that requires a managed group to exist
     pub fn is_group_management_kind(kind: Kind) -> bool {
         ADDRESSABLE_EVENT_KINDS.contains(&kind)
             || ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE.contains(&kind)
     }
-
 
     pub fn new_with_id(id: String) -> Self {
         Self {
@@ -683,13 +623,8 @@ impl Group {
             created_at: Timestamp::now(),
             updated_at: Timestamp::now(),
             scope: Scope::Default,
-            declined_by: HashSet::new(),
-            seen_by: HashSet::new(),
-            deleted_by: HashSet::new(),
-            redeemed_by: None,
         }
     }
-
 
     pub fn new(event: &Event, scope: Scope) -> Result<Self, Error> {
         if event.kind != KIND_GROUP_CREATE_9007 {
@@ -715,7 +650,6 @@ impl Group {
         Ok(group)
     }
 
-
     pub fn delete_group_request(
         &self,
         delete_group_request_event: Box<Event>,
@@ -740,7 +674,6 @@ impl Group {
             StoreCommand::SaveSignedEvent(delete_group_request_event, self.scope.clone(), None),
         ])
     }
-
 
     pub fn delete_event_request(
         &mut self,
@@ -792,7 +725,6 @@ impl Group {
         ])
     }
 
-
     pub fn add_members_from_event(
         &mut self,
         members_event: Box<Event>,
@@ -842,7 +774,6 @@ impl Group {
         Ok(events)
     }
 
-
     pub fn add_members(
         &mut self,
         group_members: impl Iterator<Item = GroupMember>,
@@ -873,12 +804,10 @@ impl Group {
         Ok(())
     }
 
-
     pub fn add_pubkey(&mut self, pubkey: PublicKey) -> Result<(), Error> {
         let member = GroupMember::new_member(pubkey);
         self.add_members(vec![member].into_iter())
     }
-
 
     pub fn admin_pubkeys(&self) -> Vec<PublicKey> {
         self.members
@@ -888,14 +817,12 @@ impl Group {
             .collect::<Vec<_>>()
     }
 
-
     /// Check if the group has at least one admin
     pub fn has_admin(&self) -> bool {
         self.members
             .values()
             .any(|member| member.is(GroupRole::Admin))
     }
-
 
     /// Validate that the group has at least one admin, return error if not
     pub fn validate_has_admin(&self) -> Result<(), Error> {
@@ -904,7 +831,6 @@ impl Group {
         }
         Ok(())
     }
-
 
     pub fn remove_members(
         &mut self,
@@ -980,7 +906,6 @@ impl Group {
         Ok(events)
     }
 
-
     pub fn set_metadata(&mut self, event: &Event, relay_pubkey: &PublicKey) -> Result<(), Error> {
         if event.kind != KIND_GROUP_EDIT_METADATA_9002 {
             return Err(Error::notice("Invalid event kind for set metadata"));
@@ -994,7 +919,6 @@ impl Group {
         self.update_state();
         Ok(())
     }
-
 
     /// Changes the roles of one or more group members.
     ///
@@ -1059,7 +983,6 @@ impl Group {
             StoreCommand::SaveUnsignedEvent(members_event, self.scope.clone(), None),
         ])
     }
-
 
     /// Processes a join request for the group.
     ///
@@ -1228,7 +1151,6 @@ impl Group {
         }
     }
 
-
     /// Handles group management events (add/remove users).
     /// Returns updated group events if the management action was successful.
     pub fn handle_group_content(
@@ -1248,9 +1170,15 @@ impl Group {
             && ![
                 KIND_GROUP_USER_JOIN_REQUEST_9021,
                 KIND_GROUP_USER_LEAVE_REQUEST_9022,
-                KIND_GROUP_INVITE_DECLINE_9023,
-                KIND_GROUP_INVITE_SEEN_9024,
-                KIND_GROUP_INVITE_DELETE_9025,
+
+// NEW: Invite state tracking events
+pub const KIND_GROUP_INVITE_DECLINE_9023: Kind = Kind::Custom(9023); // User -> Relay: Decline an invite
+pub const KIND_GROUP_INVITE_SEEN_9024: Kind = Kind::Custom(9024);    // User -> Relay: Mark invite as seen
+pub const KIND_GROUP_INVITE_DELETE_9025: Kind = Kind::Custom(9025);  // User -> Relay: Delete invite notification
+    KIND_GROUP_INVITE_DECLINE_9023,
+    KIND_GROUP_INVITE_SEEN_9024,
+    KIND_GROUP_INVITE_DELETE_9025,
+
             ]
             .contains(&event_kind)
         {
@@ -1288,7 +1216,6 @@ impl Group {
 
         Ok(commands)
     }
-
 
     fn create_join_request_commands(
         &self,
@@ -1346,7 +1273,6 @@ impl Group {
         Ok(commands)
     }
 
-
     /// Creates commands for preauth auto-approval, including relay-signed Kind 9000 add-user event
     fn create_preauth_approval_commands(
         &self,
@@ -1397,7 +1323,6 @@ impl Group {
 
         Ok(commands)
     }
-
 
     pub fn create_invite(
         &mut self,
@@ -1472,13 +1397,18 @@ impl Group {
         Ok(true)
     }
 
-
     pub fn leave_request(
         &mut self,
         event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
         if event.kind != KIND_GROUP_USER_LEAVE_REQUEST_9022 {
+
+// NEW: Invite state tracking events
+pub const KIND_GROUP_INVITE_DECLINE_9023: Kind = Kind::Custom(9023); // User -> Relay: Decline an invite
+pub const KIND_GROUP_INVITE_SEEN_9024: Kind = Kind::Custom(9024);    // User -> Relay: Mark invite as seen
+pub const KIND_GROUP_INVITE_DELETE_9025: Kind = Kind::Custom(9025);  // User -> Relay: Delete invite notification
+
             return Err(Error::notice(format!(
                 "Invalid event kind for leave request {}",
                 event.kind
@@ -1527,91 +1457,6 @@ impl Group {
         }
     }
 
-    /// Handle invite decline event
-    pub fn handle_invite_decline(
-        &mut self,
-        event: Box<Event>,
-        _relay_pubkey: &PublicKey,
-    ) -> Result<Vec<StoreCommand>, Error> {
-        if event.kind != KIND_GROUP_INVITE_DECLINE_9023 {
-            return Err(Error::notice("Invalid event kind for invite decline"));
-        }
-
-        // Get invite code from tags
-        let invite_code = event
-            .tags
-            .find(TagKind::custom("code"))
-            .and_then(|t| t.content())
-            .ok_or_else(|| Error::notice("No invite code found in decline event"))?;
-
-        // Mark invite as declined
-        if let Some(invite) = self.invites.get_mut(invite_code) {
-            invite.mark_declined(event.pubkey, event.created_at);
-        }
-
-        // Save the decline event
-        Ok(vec![StoreCommand::SaveSignedEvent(
-            event,
-            self.scope.clone(),
-            None,
-        )])
-    }
-
-    /// Handle invite seen event
-    pub fn handle_invite_seen(
-        &mut self,
-        event: Box<Event>,
-        _relay_pubkey: &PublicKey,
-    ) -> Result<Vec<StoreCommand>, Error> {
-        if event.kind != KIND_GROUP_INVITE_SEEN_9024 {
-            return Err(Error::notice("Invalid event kind for invite seen"));
-        }
-
-        let invite_code = event
-            .tags
-            .find(TagKind::custom("code"))
-            .and_then(|t| t.content())
-            .ok_or_else(|| Error::notice("No invite code found in seen event"))?;
-
-        if let Some(invite) = self.invites.get_mut(invite_code) {
-            invite.mark_seen(event.pubkey, event.created_at);
-        }
-
-        Ok(vec![StoreCommand::SaveSignedEvent(
-            event,
-            self.scope.clone(),
-            None,
-        )])
-    }
-
-    /// Handle invite delete event
-    pub fn handle_invite_delete(
-        &mut self,
-        event: Box<Event>,
-        _relay_pubkey: &PublicKey,
-    ) -> Result<Vec<StoreCommand>, Error> {
-        if event.kind != KIND_GROUP_INVITE_DELETE_9025 {
-            return Err(Error::notice("Invalid event kind for invite delete"));
-        }
-
-        let invite_code = event
-            .tags
-            .find(TagKind::custom("code"))
-            .and_then(|t| t.content())
-            .ok_or_else(|| Error::notice("No invite code found in delete event"))?;
-
-        if let Some(invite) = self.invites.get_mut(invite_code) {
-            invite.mark_deleted(event.pubkey, event.created_at);
-        }
-
-        Ok(vec![StoreCommand::SaveSignedEvent(
-            event,
-            self.scope.clone(),
-            None,
-        )])
-    }
-
-
     pub fn is_admin(&self, pubkey: &PublicKey) -> bool {
         let member = self.members.get(pubkey);
         if let Some(member) = member {
@@ -1621,11 +1466,9 @@ impl Group {
         }
     }
 
-
     pub fn is_member(&self, pubkey: &PublicKey) -> bool {
         self.members.contains_key(pubkey)
     }
-
 
     // State loading methods - used during startup to rebuild state from stored events
     pub fn load_metadata_from_event(&mut self, event: &Event) -> Result<(), Error> {
@@ -1633,7 +1476,6 @@ impl Group {
         self.update_timestamps(event);
         Ok(())
     }
-
 
     pub fn load_members_from_event(&mut self, event: &Event) -> Result<(), Error> {
         let pubkey_and_roles = event
@@ -1696,7 +1538,6 @@ impl Group {
         Ok(())
     }
 
-
     pub fn load_join_request_from_event(&mut self, event: &Event) -> Result<(), Error> {
         if !self.members.contains_key(&event.pubkey) {
             self.join_requests.insert(event.pubkey);
@@ -1704,7 +1545,6 @@ impl Group {
         }
         Ok(())
     }
-
 
     pub fn load_invite_from_event(&mut self, event: &Event) -> Result<(), Error> {
         if let Some(code) = event
@@ -1735,7 +1575,6 @@ impl Group {
         Ok(())
     }
 
-
     // Helper methods
     pub fn update_roles(&mut self) {
         let unique_roles = self
@@ -1747,7 +1586,6 @@ impl Group {
         self.roles = unique_roles;
     }
 
-
     pub fn extract_group_id(event: &Event) -> Option<&str> {
         let result = match event.kind {
             k if k.is_addressable() => event.tags.find(TagKind::d()).and_then(|t| t.content()),
@@ -1757,11 +1595,9 @@ impl Group {
         result
     }
 
-
     pub fn extract_group_h_tag(event: &Event) -> Option<&str> {
         event.tags.find(TagKind::h()).and_then(|t| t.content())
     }
-
 
     pub fn verify_member_access(&self, pubkey: &PublicKey, event_kind: Kind) -> Result<(), Error> {
         if event_kind != KIND_GROUP_USER_JOIN_REQUEST_9021
@@ -1775,7 +1611,6 @@ impl Group {
         Ok(())
     }
 
-
     pub fn update_timestamps(&mut self, event: &Event) {
         // Only update created_at if this is a group creation event
         if event.kind == KIND_GROUP_CREATE_9007 {
@@ -1784,7 +1619,6 @@ impl Group {
         // Always update updated_at to the latest timestamp
         self.updated_at = std::cmp::max(self.updated_at, event.created_at);
     }
-
 
     /// Generates all membership-related events for the group
     pub fn generate_membership_events(
@@ -1802,7 +1636,6 @@ impl Group {
 
         Ok(vec![put_user, admins, members])
     }
-
 
     pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         // println!("[generate_put_user_event] Starting");
@@ -1825,7 +1658,6 @@ impl Group {
             "".to_string(),
         )
     }
-
 
     pub fn generate_admins_event(&self, pubkey: &PublicKey) -> Result<UnsignedEvent, Error> {
         // println!("[generate_admins_event] Starting");
@@ -1879,7 +1711,6 @@ impl Group {
         ))
     }
 
-
     pub fn generate_members_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         // println!("[generate_members_event] Starting");
         let members: Vec<&PublicKey> = self.members.keys().collect();
@@ -1906,7 +1737,6 @@ impl Group {
         )
     }
 
-
     /// Generates all metadata-related events for the group
     pub fn generate_metadata_events(
         &self,
@@ -1919,7 +1749,6 @@ impl Group {
         ]
     }
 
-
     /// Generates all group state events
     pub fn generate_all_state_events(
         &self,
@@ -1929,51 +1758,6 @@ impl Group {
         let mut events = self.generate_metadata_events(relay_pubkey, relay_url);
         events.extend(self.generate_membership_events(relay_pubkey)?);
         Ok(events)
-    }
-
-    /// Mark invite as declined by a user
-    pub fn mark_declined(&mut self, pubkey: PublicKey, timestamp: Timestamp) {
-        self.declined_by.insert((pubkey, timestamp));
-    }
-
-    /// Mark invite as seen by a user
-    pub fn mark_seen(&mut self, pubkey: PublicKey, timestamp: Timestamp) {
-        self.seen_by.insert((pubkey, timestamp));
-    }
-
-    /// Mark invite as deleted by a user
-    pub fn mark_deleted(&mut self, pubkey: PublicKey, timestamp: Timestamp) {
-        self.deleted_by.insert((pubkey, timestamp));
-    }
-
-    /// Check if invite was declined by specific user
-    pub fn is_declined_by(&self, pubkey: &PublicKey) -> bool {
-        self.declined_by.iter().any(|(pk, _)| pk == pubkey)
-    }
-
-    /// Check if invite was seen by specific user
-    pub fn is_seen_by(&self, pubkey: &PublicKey) -> bool {
-        self.seen_by.iter().any(|(pk, _)| pk == pubkey)
-    }
-
-    /// Check if invite was deleted by specific user
-    pub fn is_deleted_by(&self, pubkey: &PublicKey) -> bool {
-        self.deleted_by.iter().any(|(pk, _)| pk == pubkey)
-    }
-
-    /// Get the overall status for a specific user
-    pub fn get_status_for_user(&self, pubkey: &PublicKey) -> InviteStatus {
-        if self.is_deleted_by(pubkey) {
-            InviteStatus::Deleted
-        } else if self.redeemed_by.as_ref().map_or(false, |(pk, _)| pk == pubkey) {
-            InviteStatus::Accepted
-        } else if self.is_declined_by(pubkey) {
-            InviteStatus::Declined
-        } else if self.is_seen_by(pubkey) {
-            InviteStatus::Seen
-        } else {
-            InviteStatus::Pending
-        }
     }
 }
 
@@ -2037,7 +1821,6 @@ impl Group {
         )
     }
 
-
     pub fn generate_roles_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         let supported_roles: Vec<(String, String)> = GroupRole::iter()
             .map(|role| {
@@ -2064,7 +1847,6 @@ impl Group {
             "List of roles supported by this group".to_string(),
         )
     }
-
 }
 
 // Authorization checks
@@ -2081,7 +1863,6 @@ impl Group {
         true
     }
 
-
     pub fn can_edit_metadata(&self, pubkey: &PublicKey, relay_pubkey: &PublicKey) -> bool {
         if self.is_admin(pubkey) {
             return true;
@@ -2095,7 +1876,6 @@ impl Group {
 
         false
     }
-
 
     pub fn can_create_invites(&self, pubkey: &PublicKey, relay_pubkey: &PublicKey) -> bool {
         if self.is_admin(pubkey) {
@@ -2111,7 +1891,6 @@ impl Group {
         false
     }
 
-
     pub fn can_delete_group(
         &self,
         relay_pubkey: &PublicKey,
@@ -2122,7 +1901,6 @@ impl Group {
         let deletion_pubkey = Some(delete_group_event.pubkey);
         self.can_delete_event(&deletion_pubkey, relay_pubkey, delete_group_event, "group")
     }
-
 
     pub fn can_delete_event(
         &self,
@@ -2159,7 +1937,6 @@ impl Group {
             "User is not authorized to delete this event",
         ))
     }
-
 
     pub fn can_see_event(
         &self,
@@ -2230,7 +2007,6 @@ impl Group {
         );
         Ok(false)
     }
-
 }
 
 #[cfg(test)]
@@ -2254,7 +2030,6 @@ mod tests {
         assert_eq!(group.members.len(), 1);
     }
 
-
     #[tokio::test]
     async fn test_add_members() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
@@ -2265,7 +2040,6 @@ mod tests {
         assert!(group.is_member(&member_keys.public_key()));
         assert!(!group.is_admin(&member_keys.public_key()));
     }
-
 
     #[tokio::test]
     async fn test_remove_members() {
@@ -2280,7 +2054,6 @@ mod tests {
         remove_member_from_group(&mut group, &admin_keys, &member_keys, &group_id).await;
         assert!(!group.is_member(&member_keys.public_key()));
     }
-
 
     #[tokio::test]
     async fn test_metadata_management() {
@@ -2309,7 +2082,6 @@ mod tests {
         assert!(group.metadata.closed);
     }
 
-
     #[tokio::test]
     async fn test_metadata_management_can_set_name() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2334,7 +2106,6 @@ mod tests {
             .is_ok());
         assert_eq!(group.metadata.name, "New Group Name");
     }
-
 
     #[tokio::test]
     async fn test_metadata_management_can_set_about() {
@@ -2361,7 +2132,6 @@ mod tests {
         assert_eq!(group.metadata.about, Some("About text".to_string()));
     }
 
-
     #[tokio::test]
     async fn test_metadata_management_can_set_picture() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2386,7 +2156,6 @@ mod tests {
             .is_ok());
         assert_eq!(group.metadata.picture, Some("picture_url".to_string()));
     }
-
 
     #[tokio::test]
     async fn test_metadata_management_can_set_visibility() {
@@ -2434,7 +2203,6 @@ mod tests {
         assert!(group.metadata.private);
     }
 
-
     #[tokio::test]
     async fn test_metadata_management_can_set_multiple_fields() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2463,7 +2231,6 @@ mod tests {
         assert!(!group.metadata.private);
     }
 
-
     #[tokio::test]
     async fn test_metadata_management_handles_unknown_tags() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2490,7 +2257,6 @@ mod tests {
         assert_eq!(unknown_tag.unwrap().content(), Some("unknown_value"));
     }
 
-
     #[tokio::test]
     async fn test_invite_system() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2503,7 +2269,6 @@ mod tests {
             .is_ok());
         assert_eq!(group.invites.len(), 1);
     }
-
 
     #[tokio::test]
     async fn test_invite_system_admin_can_create_invite() {
@@ -2519,7 +2284,6 @@ mod tests {
             .unwrap());
         assert!(group.invites.contains_key(invite_code));
     }
-
 
     #[tokio::test]
     async fn test_invite_system_user_can_join_with_valid_invite() {
@@ -2548,7 +2312,6 @@ mod tests {
         assert!(group.is_member(&member_keys.public_key()));
     }
 
-
     #[tokio::test]
     async fn test_join_request() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
@@ -2564,7 +2327,6 @@ mod tests {
         assert_eq!(group.join_requests.len(), 1);
     }
 
-
     #[tokio::test]
     async fn test_join_request_adds_to_join_requests() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
@@ -2579,7 +2341,6 @@ mod tests {
             .is_empty());
         assert!(group.join_requests.contains(&member_keys.public_key()));
     }
-
 
     #[tokio::test]
     async fn test_join_request_from_existing_member() {
@@ -2613,7 +2374,6 @@ mod tests {
         assert_eq!(group.members.len(), initial_member_count);
     }
 
-
     #[tokio::test]
     async fn test_leave_request_removes_member() {
         let (admin_keys, member_keys, relay_pubkey) = create_test_keys().await;
@@ -2633,7 +2393,6 @@ mod tests {
         assert!(!group.is_member(&member_keys.public_key()));
     }
 
-
     #[tokio::test]
     async fn test_event_visibility() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
@@ -2651,7 +2410,6 @@ mod tests {
             .unwrap());
     }
 
-
     #[tokio::test]
     async fn test_event_visibility_admin_can_see_events() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
@@ -2668,7 +2426,6 @@ mod tests {
             )
             .unwrap());
     }
-
 
     #[tokio::test]
     async fn test_event_visibility_member_can_see_events() {
@@ -2697,7 +2454,6 @@ mod tests {
             .unwrap());
     }
 
-
     #[tokio::test]
     async fn test_event_visibility_non_member_cannot_see_events() {
         let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
@@ -2714,7 +2470,6 @@ mod tests {
             )
             .unwrap());
     }
-
 
     #[tokio::test]
     async fn test_delete_event_request_without_auth_admin_can_delete() {
@@ -2756,7 +2511,6 @@ mod tests {
         }
     }
 
-
     #[tokio::test]
     async fn test_delete_event_request_wrong_kind() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
@@ -2790,7 +2544,6 @@ mod tests {
         );
     }
 
-
     #[tokio::test]
     async fn test_delete_event_request_non_member() {
         let (admin_keys, _, non_member_keys) = create_test_keys().await;
@@ -2814,7 +2567,6 @@ mod tests {
         );
     }
 
-
     #[tokio::test]
     async fn test_remove_members_cannot_remove_last_admin() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2830,7 +2582,6 @@ mod tests {
             .remove_members(Box::new(event), &admin_keys.public_key())
             .is_err());
     }
-
 
     #[tokio::test]
     async fn test_group_creation_always_has_admin() {
@@ -2863,7 +2614,6 @@ mod tests {
         );
     }
 
-
     #[tokio::test]
     async fn test_set_roles_cannot_change_last_admin() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2884,7 +2634,6 @@ mod tests {
         // Verify the admin still has admin role
         assert!(group.is_admin(&admin_keys.public_key()));
     }
-
 
     #[tokio::test]
     async fn test_set_roles_can_change_admin_when_multiple_admins() {
@@ -2914,7 +2663,6 @@ mod tests {
         assert!(group.is_admin(&member_keys.public_key()));
     }
 
-
     #[tokio::test]
     async fn test_delete_event_request_deleting_invite() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2940,7 +2688,6 @@ mod tests {
             "Invite should be removed from the invites map after deletion"
         );
     }
-
 
     #[tokio::test]
     async fn test_handle_remove_user_admin_removes_member() {
@@ -2972,7 +2719,6 @@ mod tests {
         assert!(!group.is_member(&member_keys.public_key()));
     }
 
-
     #[tokio::test]
     async fn test_add_pubkey_propagates_errors() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2991,7 +2737,6 @@ mod tests {
         let stored_member = group.members.get(&admin_keys.public_key()).unwrap();
         assert!(stored_member.roles.contains(&GroupRole::Admin));
     }
-
 
     #[tokio::test]
     async fn test_add_members_allows_role_downgrades() {
@@ -3020,7 +2765,6 @@ mod tests {
         assert!(original_admin.roles.contains(&GroupRole::Admin));
     }
 
-
     #[tokio::test]
     async fn test_add_members_prevents_last_admin_downgrade() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -3039,7 +2783,6 @@ mod tests {
         let stored_member = group.members.get(&admin_keys.public_key()).unwrap();
         assert!(stored_member.roles.contains(&GroupRole::Admin));
     }
-
 
     #[tokio::test]
     async fn test_load_metadata_from_event_handles_unknown_tags() {
@@ -3074,7 +2817,6 @@ mod tests {
         assert!(group.metadata.private);
         assert!(group.metadata.closed);
     }
-
 
     #[tokio::test]
     async fn test_load_metadata_from_event_preserves_unknown_tags_across_updates() {
@@ -3140,7 +2882,6 @@ mod tests {
             "About should be updated"
         );
     }
-
 
     #[tokio::test]
     async fn test_metadata_management_preserves_tags_across_updates() {
@@ -3256,7 +2997,6 @@ mod tests {
         );
     }
 
-
     #[tokio::test]
     async fn test_broadcast_mode_restrictions() {
         let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
@@ -3349,6 +3089,12 @@ mod tests {
         let _member_leave_request = create_test_event(
             &member_keys,
             KIND_GROUP_USER_LEAVE_REQUEST_9022.as_u16(),
+
+// NEW: Invite state tracking events
+pub const KIND_GROUP_INVITE_DECLINE_9023: Kind = Kind::Custom(9023); // User -> Relay: Decline an invite
+pub const KIND_GROUP_INVITE_SEEN_9024: Kind = Kind::Custom(9024);    // User -> Relay: Mark invite as seen
+pub const KIND_GROUP_INVITE_DELETE_9025: Kind = Kind::Custom(9025);  // User -> Relay: Delete invite notification
+
             vec![Tag::custom(TagKind::h(), [group_id.clone()])],
         )
         .await;
@@ -3428,7 +3174,6 @@ mod tests {
             .is_ok());
     }
 
-
     #[tokio::test]
     async fn test_leave_request_admin_behavior() {
         let (admin_keys, member_keys, relay_pubkey) = create_test_keys().await;
@@ -3477,7 +3222,6 @@ mod tests {
         );
     }
 
-
     #[tokio::test]
     async fn test_single_use_invite_creation() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -3499,7 +3243,6 @@ mod tests {
             "New invite should not be used yet"
         );
     }
-
 
     #[tokio::test]
     async fn test_reusable_invite_creation() {
@@ -3525,7 +3268,6 @@ mod tests {
         let invite = group.invites.get(invite_code).unwrap();
         assert!(invite.reusable, "Invite should be marked as reusable");
     }
-
 
     #[tokio::test]
     async fn test_using_single_use_invite() {
@@ -3573,7 +3315,6 @@ mod tests {
         assert!(!group.is_member(&user2_keys.public_key()));
         assert!(group.join_requests.contains(&user2_keys.public_key()));
     }
-
 
     #[tokio::test]
     async fn test_using_reusable_invite() {
@@ -3630,7 +3371,6 @@ mod tests {
         assert!(group.is_member(&user2_keys.public_key()));
     }
 
-
     #[tokio::test]
     async fn test_load_invite_state_from_events() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -3664,5 +3404,4 @@ mod tests {
         assert!(reusable_invite.reusable);
         assert_eq!(reusable_invite.redeemed_by, None);
     }
-
 }
