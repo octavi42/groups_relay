@@ -171,6 +171,9 @@ impl Groups {
                     KIND_GROUP_CREATE_9007,            // 9007
                     KIND_GROUP_USER_JOIN_REQUEST_9021, // 9021
                     KIND_GROUP_CREATE_INVITE_9009,     // 9009
+                    KIND_GROUP_INVITE_DECLINE_9023,    // 9023
+                    KIND_GROUP_INVITE_SEEN_9024,       // 9024
+                    KIND_GROUP_INVITE_DELETE_9025,     // 9025
                 ])
                 .custom_tag(
                     SingleLetterTag::lowercase(Alphabet::H),
@@ -187,25 +190,37 @@ impl Groups {
                         scope
                     );
 
-                    for event in historical_events {
+                    // Process events in two passes:
+                    // 1. First pass: Load invites and other primary data
+                    // 2. Second pass: Restore invite state tracking
+
+                    for event in &historical_events {
                         if event.kind == KIND_GROUP_CREATE_9007 {
                             debug!("[{}] Found creation event in scope {:?}", group_id, scope);
                             group.created_at = event.created_at;
                         } else if event.kind == KIND_GROUP_USER_JOIN_REQUEST_9021 {
-                            if let Err(e) = group.load_join_request_from_event(&event) {
+                            if let Err(e) = group.load_join_request_from_event(event) {
                                 warn!(
                                     "Error loading join request for group {} in scope {:?}: {}",
                                     group_id, scope, e
                                 );
                             }
                         } else if event.kind == KIND_GROUP_CREATE_INVITE_9009 {
-                            if let Err(e) = group.load_invite_from_event(&event) {
+                            if let Err(e) = group.load_invite_from_event(event) {
                                 warn!(
                                     "Error loading invite for group {} in scope {:?}: {}",
                                     group_id, scope, e
                                 );
                             }
                         }
+                    }
+
+                    // Second pass: Restore invite state tracking from state events
+                    if let Err(e) = group.load_invite_state_from_events(&historical_events) {
+                        warn!(
+                            "Error loading invite state for group {} in scope {:?}: {}",
+                            group_id, scope, e
+                        );
                     }
 
                     // Update timestamps

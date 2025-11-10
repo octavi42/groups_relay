@@ -1735,6 +1735,63 @@ impl Group {
         Ok(())
     }
 
+    /// Restore invite state tracking from historical events
+    /// This should be called during group loading to restore the declined_by, seen_by,
+    /// and deleted_by HashSets that track per-user invite states
+    pub fn load_invite_state_from_events(&mut self, events: &[Event]) -> Result<(), Error> {
+        debug!("[{}] Loading invite state from {} events", self.id, events.len());
+
+        for event in events {
+            // Only process invite state events
+            match event.kind {
+                KIND_GROUP_INVITE_DECLINE_9023 | KIND_GROUP_INVITE_SEEN_9024 | KIND_GROUP_INVITE_DELETE_9025 => {
+                    // Get invite code from tags
+                    if let Some(invite_code) = event
+                        .tags
+                        .find(TagKind::custom("code"))
+                        .and_then(|t| t.content())
+                    {
+                        // Find the corresponding invite
+                        if let Some(invite) = self.invites.get_mut(invite_code) {
+                            match event.kind {
+                                KIND_GROUP_INVITE_DECLINE_9023 => {
+                                    invite.mark_declined(event.pubkey, event.created_at);
+                                    debug!("[{}] Restored decline state for invite {} by user {}",
+                                           self.id, invite_code, event.pubkey);
+                                }
+                                KIND_GROUP_INVITE_SEEN_9024 => {
+                                    invite.mark_seen(event.pubkey, event.created_at);
+                                    debug!("[{}] Restored seen state for invite {} by user {}",
+                                           self.id, invite_code, event.pubkey);
+                                }
+                                KIND_GROUP_INVITE_DELETE_9025 => {
+                                    invite.mark_deleted(event.pubkey, event.created_at);
+                                    debug!("[{}] Restored deleted state for invite {} by user {}",
+                                           self.id, invite_code, event.pubkey);
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            // Invite not found - this could happen if the invite was deleted
+                            // or if state events exist for invites that were never loaded
+                            debug!("[{}] Invite state event for unknown invite code: {} (event kind: {})",
+                                   self.id, invite_code, event.kind);
+                        }
+                    } else {
+                        warn!("[{}] Invite state event missing code tag: {} (event kind: {})",
+                              self.id, event.id, event.kind);
+                    }
+                }
+                _ => {
+                    // Not an invite state event, skip
+                    continue;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
 
     // Helper methods
     pub fn update_roles(&mut self) {
