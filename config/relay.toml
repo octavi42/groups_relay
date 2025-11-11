@@ -1,5 +1,5 @@
 # Relay Configuration
-relay_url = "wss://groups.yourdomain.com"
+relay_url = "wss://groups.contextio.app"
 local_addr = "127.0.0.1:8080"
 db_path = "/app/data"
 
