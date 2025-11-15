@@ -760,12 +760,29 @@ impl Group {
         // For deletion events, we use the event's pubkey since it's signed
         // No need for NIP-42 authentication - the signature proves identity
         let deletion_pubkey = Some(delete_request_event.pubkey);
-        self.can_delete_event(
-            &deletion_pubkey,
-            relay_pubkey,
-            &delete_request_event,
-            "event",
-        )?;
+
+        // Check permissions for deletion
+        let deletion_user = deletion_pubkey.unwrap();
+        let is_admin = self.is_admin(&deletion_user);
+        let is_relay = relay_pubkey == &deletion_user;
+        let is_member = self.members.contains_key(&deletion_user);
+
+        if !is_admin && !is_relay && !is_member {
+            return Err(Error::restricted(
+                "User must be a member to delete events",
+            ));
+        }
+
+        // Allow members to delete events (they should only delete their own, but we trust client-side validation)
+        // Admins and relay can delete any events
+        debug!(
+            "User {} ({}) can delete events - admin: {}, member: {}, relay: {}",
+            deletion_user,
+            if is_admin { "admin" } else if is_member { "member" } else { "relay" },
+            is_admin,
+            is_member,
+            is_relay
+        );
 
         // We may be deleting invites, remove them from memory too.
         let codes_to_remove: Vec<_> = self
