@@ -966,15 +966,23 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
-        let event_id = event.id;
-        let result = {
-            let mut group = self
-                .find_group_from_event_mut(&event, scope)?
-                .ok_or_else(|| Error::event_error("[InviteDecline] Group not found", event_id))?;
-
-            group.handle_invite_decline(event, &self.relay_pubkey)
-        };
-        result
+        // Try to find the group and mark the invite as declined
+        if let Some(mut group) = self.find_group_from_event_mut(&event, scope)? {
+            return group.handle_invite_decline(event, &self.relay_pubkey);
+        }
+        
+        // Even if group not found, still save the decline event
+        // This is a user-specific state event that should be stored
+        tracing::debug!(
+            target: "groups_relay_logic", 
+            "Saving invite decline event for unknown/unloaded group: {}", 
+            event.id
+        );
+        Ok(vec![StoreCommand::SaveSignedEvent(
+            event,
+            scope.clone(),
+            None,
+        )])
     }
 
     pub fn handle_invite_seen(
@@ -982,15 +990,23 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
-        let event_id = event.id;
-        let result = {
-            let mut group = self
-                .find_group_from_event_mut(&event, scope)?
-                .ok_or_else(|| Error::event_error("[InviteSeen] Group not found", event_id))?;
-
-            group.handle_invite_seen(event, &self.relay_pubkey)
-        };
-        result
+        // Try to find the group and mark the invite as seen
+        if let Some(mut group) = self.find_group_from_event_mut(&event, scope)? {
+            return group.handle_invite_seen(event, &self.relay_pubkey);
+        }
+        
+        // Even if group not found, still save the seen event
+        // This is a user-specific state event that should be stored
+        tracing::debug!(
+            target: "groups_relay_logic", 
+            "Saving invite seen event for unknown/unloaded group: {}", 
+            event.id
+        );
+        Ok(vec![StoreCommand::SaveSignedEvent(
+            event,
+            scope.clone(),
+            None,
+        )])
     }
 
     pub fn handle_invite_delete(
@@ -998,15 +1014,24 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
-        let event_id = event.id;
-        let result = {
-            let mut group = self
-                .find_group_from_event_mut(&event, scope)?
-                .ok_or_else(|| Error::event_error("[InviteDelete] Group not found", event_id))?;
-
-            group.handle_invite_delete(event, &self.relay_pubkey)
-        };
-        result
+        // Try to find the group and mark the invite as deleted
+        if let Some(mut group) = self.find_group_from_event_mut(&event, scope)? {
+            return group.handle_invite_delete(event, &self.relay_pubkey);
+        }
+        
+        // Even if group not found, still save the delete event
+        // This is a user-specific state event that should be stored
+        // so the notification can be properly filtered out on reload
+        tracing::debug!(
+            target: "groups_relay_logic", 
+            "Saving invite delete event for unknown/unloaded group: {}", 
+            event.id
+        );
+        Ok(vec![StoreCommand::SaveSignedEvent(
+            event,
+            scope.clone(),
+            None,
+        )])
     }
 }
 
